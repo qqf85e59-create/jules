@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>家系図作成ツール</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Meiryo UI', sans-serif;background:#f7f7f7;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+#toolbar{display:flex;align-items:center;gap:6px;padding:5px 10px;background:#fff;border-bottom:1px solid #ddd;font-size:12px;flex-shrink:0;flex-wrap:wrap}
+#toolbar b{font-size:14px;margin-right:4px}
+.tb{padding:4px 12px;font-size:12px;font-family:inherit;border:1px solid #ccc;border-radius:3px;cursor:pointer;white-space:nowrap;background:#f5f5f5;color:#333}
+.tb.bl{background:#2563eb;color:#fff;border:none}
+.tb.gn{background:#059669;color:#fff;border:none}
+.tb.fl{background:#f8f4ee;border:1px solid #d4a85c;color:#8b6914}
+#cw{flex:1;position:relative;overflow:hidden}
+#sv{width:100%;height:100%;display:block}
+
+/* panels */
+.pn{position:absolute;background:#fff;border:1px solid #ccc;border-radius:4px;padding:11px;box-shadow:0 2px 10px rgba(0,0,0,.12);font-size:12px;z-index:10;font-family:inherit}
+.pn h3{font-size:13px;margin:0 0 7px}
+.pn label{display:block;font-size:10px;color:#666;margin-bottom:1px}
+.pn input[type=text],.pn select{width:100%;padding:3px 5px;font-size:12px;font-family:inherit;border:1px solid #ccc;border-radius:2px;box-sizing:border-box;margin-bottom:5px}
+.pn .rw{display:flex;gap:10px;margin:7px 0 4px;flex-wrap:wrap}
+.pn .ck{font-size:11px;display:flex;align-items:center;gap:3px;cursor:pointer}
+.act-btn{width:100%;padding:5px 0;font-size:11px;border-radius:3px;cursor:pointer;font-family:inherit;margin-top:4px;border:none}
+.act-btn.add{background:#eff6ff;border:1px solid #93c5fd;color:#2563eb}
+.act-btn.del{background:#fff5f5;border:1px solid #e8aaaa;color:#c33}
+.act-btn.mv{background:#f5f5f5;border:1px solid #ccc;color:#333;width:48%;display:inline-block}
+.sep{border-top:1px solid #eee;padding-top:6px;margin-top:6px}
+
+/* modal */
+.md{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:260px;z-index:20}
+.md .bs{display:flex;gap:7px;margin-top:8px}
+.md .bs button{flex:1;padding:5px 0;font-size:12px;font-family:inherit;border-radius:3px;cursor:pointer}
+
+/* legend overlay */
+#legend{position:absolute;bottom:36px;right:12px;background:rgba(255,255,255,.92);padding:8px 12px;border-radius:3px;font-size:10px;line-height:1.9;pointer-events:none;border:1px solid #e0e0e0}
+#legend .lrow{display:flex;align-items:center;gap:6px}
+#legend .lbox{width:28px;height:13px;border:1px solid #000;display:inline-block;flex-shrink:0}
+#legend .lbox.db{outline:1px solid #000;outline-offset:2px}
+
+/* context menu */
+#ctx{position:absolute;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.15);font-size:12px;z-index:30;min-width:160px;padding:4px 0;display:none}
+#ctx div{padding:5px 14px;cursor:pointer}
+#ctx div:hover{background:#eff6ff}
+
+#ft{padding:4px 10px;background:#fff;border-top:1px solid #ddd;font-size:10px;color:#999;flex-shrink:0}
+.toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#059669;color:#fff;padding:5px 16px;border-radius:4px;font-size:12px;z-index:50;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <b>家系図</b>
+  <button class="tb bl" onclick="showAddDialog()">＋ 人物追加</button>
+  <button class="tb gn" onclick="exportToPNG()">PNG出力</button>
+  <button class="tb fl" onclick="saveFile()">💾 保存</button>
+  <button class="tb fl" onclick="document.getElementById('fileInput').click()">📂 開く</button>
+  <button class="tb fl" onclick="newFile()">📄 新規</button>
+  <input type="file" id="fileInput" accept=".json" style="display:none" onchange="openFile(this)">
+  <button class="tb" onclick="undoLastAction()" title="Ctrl+Z">↩ 戻す</button>
+  <button class="tb" onclick="resetView()">表示リセット</button>
+  <select id="paperSize" class="tb" style="background:#fff;border:1px solid #ccc;margin-left:4px" onchange="markAsDirty(); resetView();">
+    <option value="auto">出力サイズ: 自動フィット</option>
+    <option value="A4V">出力サイズ: A4縦</option>
+    <option value="A4H" selected>出力サイズ: A4横</option>
+    <option value="A3V">出力サイズ: A3縦</option>
+    <option value="A3H">出力サイズ: A3横</option>
+  </select>
+  <span id="fileNameDisplay" style="color:#666;font-size:11px;margin-left:4px"></span>
+  <span style="color:#aaa;font-size:10px;margin-left:3px">ドラッグ:移動 ／ スクロール:拡大縮小 ／ クリック:編集 ／ 右クリック:追加メニュー</span>
+</div>
+
+<div id="cw"><svg id="sv"></svg></div>
+
+<!-- Edit Panel -->
+<div id="editPanel" class="pn" style="display:none;right:10px;top:50px;width:220px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+    <h3>人物編集</h3>
+    <button onclick="closeEditPanel()" style="background:none;border:none;font-size:16px;cursor:pointer;color:#999;line-height:1">✕</button>
+  </div>
+  <label>肩書き</label><input type="text" id="editTitle" onfocus="startEdit()" oninput="liveUpdateEdit('title',this.value)" onchange="commitEdit('title',this.value)" placeholder="例: 【社長(三代目)】">
+  <label>氏名</label><input type="text" id="editName" onfocus="startEdit()" oninput="liveUpdateEdit('name',this.value)" onchange="commitEdit('name',this.value)" placeholder="例: 山田太郎">
+  <label>続柄</label><input type="text" id="editRelation" onfocus="startEdit()" oninput="liveUpdateEdit('rel',this.value)" onchange="commitEdit('rel',this.value)" placeholder="例: 本人、長男">
+  <div class="rw">
+    <label class="ck"><input type="checkbox" id="editDead" onchange="commitEditCheckbox('dead',this.checked)">故人</label>
+    <label class="ck"><input type="checkbox" id="editShareholder" onchange="commitEditCheckbox('sh',this.checked)">株主</label>
+  </div>
+  <label>役員ステータス</label>
+  <select id="editOfficer" onchange="commitEditCheckbox('off',this.value)">
+    <option value="none">なし</option><option value="director">取締役</option><option value="auditor">監査役</option>
+  </select>
+  <div id="coupleStatusWrapper" style="display:none; margin-top:5px">
+    <label>パートナー関係</label>
+    <select id="editCoupleStatus" onchange="commitCoupleStatus(this.value)">
+      <option value="married">婚姻中</option><option value="divorced">離別</option><option value="bereaved">死別</option><option value="single">単独親(未婚等)</option>
+    </select>
+  </div>
+  <div class="sep" id="ep-actions"></div>
+  <div class="sep" id="ep-order"></div>
+  <div class="sep">
+    <button class="act-btn del" onclick="promptDeletePerson()">この人物を削除</button>
+  </div>
+</div>
+
+<!-- Add Dialog -->
+<div id="addDialog" class="pn md" style="display:none">
+  <h3>人物を追加</h3>
+  <label>追加タイプ</label>
+  <select id="addMode" onchange="onAddModeChange()">
+    <option value="child">子として追加</option><option value="spouse">配偶者として追加</option><option value="solo">単独で追加</option>
+  </select>
+  <label>続柄</label><input type="text" id="addRelation" placeholder="例: 長男、妻">
+  <div id="addParentWrapper"><label>親（夫婦）</label><select id="addParent"></select></div>
+  <div id="addSpouseWrapper" style="display:none"><label>配偶者の相手</label><select id="addSpouse"></select></div>
+  <div class="bs">
+    <button onclick="executeAdd()" style="background:#2563eb;color:#fff;border:none">追加</button>
+    <button onclick="closeAddDialog()" style="background:#f5f5f5;border:1px solid #ccc">キャンセル</button>
+  </div>
+</div>
+
+<!-- Context Menu -->
+<div id="ctx"></div>
+
+<!-- Legend (fixed HTML overlay, not SVG) -->
+<div id="legend"></div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<div id="ft">【使用方法】□ 事業に関連する親族は全て記載　□ 関連しない親族は枠のみで名前空白可　□ 現社長を本人とした続柄を入れる　□ できる限り年齢を記入</div>
+
+<script>
+const BOX_WIDTH = 80, BOX_HEIGHT = 166, SPACING = 28, SIBLING_SPACING = 30, GENERATION_HEIGHT = 80, RELATION_HEIGHT = 20, COLOR_YELLOW = "#FFFF99";
+const FONT_FAMILY = "'Meiryo UI', sans-serif";
+let _nextIdSuffix = 1;
+const generateId = () => `m${Date.now()}_${_nextIdSuffix++}`;
+const getElement = id => document.getElementById(id);
+
+/* ===== TOAST ===== */
+let _toastTimeout;
+function showToast(msg){
+  const t = getElement('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(_toastTimeout);
+  _toastTimeout = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+/* ===== UNDO ===== */
+let undoHistory = [];
+function saveUndoSnapshot(){
+  undoHistory.push(JSON.stringify({
+    members: members,
+    couples: couples,
+    parentChildren: parentChildren,
+    paper: getElement('paperSize') ? getElement('paperSize').value : 'A4H'
+  }));
+  if(undoHistory.length > 40) undoHistory.shift();
+  markAsDirty();
+}
+
+function undoLastAction(){
+  if(undoHistory.length < 2){
+    showToast('これ以上戻せません');
+    return;
+  }
+  undoHistory.pop(); // Remove current state
+  const prevState = JSON.parse(undoHistory[undoHistory.length - 1]);
+
+  // Create deep copies to prevent reference issues
+  members = JSON.parse(JSON.stringify(prevState.members));
+  couples = JSON.parse(JSON.stringify(prevState.couples));
+  parentChildren = JSON.parse(JSON.stringify(prevState.parentChildren));
+  if (prevState.paper && getElement('paperSize')) getElement('paperSize').value = prevState.paper;
+
+  selectedPersonId = null;
+  closeEditPanel();
+  renderTree();
+  markAsDirty();
+  showToast('↩ 戻しました');
+}
+
+document.addEventListener('keydown', e => {
+  if((e.ctrlKey || e.metaKey) && e.key === 'z'){
+    e.preventDefault();
+    undoLastAction();
+  }
+  if((e.ctrlKey || e.metaKey) && e.key === 's'){
+    e.preventDefault();
+    saveFile();
+  }
+});
+
+/* ===== FILE SAVE/LOAD (JSON) & AUTO BACKUP ===== */
+let currentFileName = '';
+let isDirty = false;
+
+function saveAutoBackup() {
+  try {
+    const data = JSON.stringify({
+      members: members,
+      couples: couples,
+      parentChildren: parentChildren,
+      paper: getElement('paperSize') ? getElement('paperSize').value : 'A4H',
+      timestamp: Date.now()
+    });
+    localStorage.setItem('familyTreeAutoBackup', data);
+  } catch(e) {
+    console.warn('Auto backup failed', e);
+  }
+}
+
+function checkAutoBackup() {
+  try {
+    const backupStr = localStorage.getItem('familyTreeAutoBackup');
+    if (!backupStr) return;
+    const backup = JSON.parse(backupStr);
+
+    // Only prompt if we have data and the current default data hasn't been modified yet
+    if (backup && backup.members && confirm('前回の作業の自動バックアップが見つかりました。復元しますか？')) {
+      members = backup.members;
+      couples = backup.couples || backup.C;
+      parentChildren = backup.parentChildren || backup.P;
+      if (backup.paper && getElement('paperSize')) getElement('paperSize').value = backup.paper;
+
+      currentFileName = '';
+      isDirty = true;
+      undoHistory = [];
+      saveUndoSnapshot();
+      selectedPersonId = null;
+      closeEditPanel();
+      renderTree();
+      updatePageTitle();
+      showToast('バックアップを復元しました');
+    }
+  } catch(e) {
+    console.warn('Backup restore failed', e);
+  }
+}
+
+function markAsDirty(){
+  isDirty = true;
+  updatePageTitle();
+  saveAutoBackup();
+}
+
+function updatePageTitle(){
+  getElement('fileNameDisplay').textContent = (currentFileName || '（未保存）') + (isDirty ? ' *' : '');
+}
+
+function saveFile(){
+  const data = JSON.stringify({
+    members: members,
+    couples: couples,
+    parentChildren: parentChildren,
+    paper: getElement('paperSize').value
+  }, null, 2);
+  const blob = new Blob([data], {type: 'application/json'});
+  const name = currentFileName || '家系図_' + new Date().toISOString().slice(0, 10) + '.json';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  currentFileName = name;
+  isDirty = false;
+  updatePageTitle();
+  showToast('💾 保存しました：' + name);
+}
+
+function openFile(input){
+  const file = input.files[0];
+  if(!file) return;
+  if(isDirty && !confirm('未保存の変更があります。開きますか？')) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parsedData = JSON.parse(e.target.result);
+      if(!parsedData.members && !parsedData.M) throw new Error('invalid format');
+
+      // Handle both old format (M, C, P) and new format
+      members = parsedData.members || parsedData.M;
+      couples = parsedData.couples || parsedData.C;
+      parentChildren = parsedData.parentChildren || parsedData.P;
+      if (parsedData.paper && getElement('paperSize')) getElement('paperSize').value = parsedData.paper;
+
+      currentFileName = file.name;
+      isDirty = false;
+      undoHistory = [];
+      saveUndoSnapshot();
+      selectedPersonId = null;
+      closeEditPanel();
+      renderTree();
+      updatePageTitle();
+      showToast('📂 開きました：' + file.name);
+    } catch(err) {
+      alert('ファイル形式が正しくありません。');
+    }
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+function newFile(){
+  if(isDirty && !confirm('未保存の変更があります。新規作成しますか？')) return;
+  members = JSON.parse(JSON.stringify(DEFAULT_DATA.M));
+  couples = JSON.parse(JSON.stringify(DEFAULT_DATA.C));
+  parentChildren = JSON.parse(JSON.stringify(DEFAULT_DATA.P));
+  currentFileName = '';
+  isDirty = false;
+  undoHistory = [];
+  saveUndoSnapshot();
+  selectedPersonId = null;
+  closeEditPanel();
+  renderTree();
+  updatePageTitle();
+  showToast('📄 新規作成しました');
+}
+
+window.addEventListener('beforeunload', e => {
+  if(isDirty){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+/* ===== DEFAULT DATA ===== */
+const DEFAULT_DATA = {
+  M:[
+    {id:"A",title:"【初代】",name:"",rel:"祖父",dead:true,sh:false,off:"none"},
+    {id:"B",title:"",name:"",rel:"祖母",dead:false,sh:false,off:"none"},
+    {id:"C",title:"【会長(二代目)】",name:"",rel:"父",dead:true,sh:true,off:"none"},
+    {id:"D",title:"",name:"",rel:"母",dead:false,sh:true,off:"none"},
+    {id:"E",title:"【社長(三代目)】",name:"",rel:"本人",dead:false,sh:true,off:"director"},
+    {id:"F",title:"【監査役】",name:"",rel:"妻",dead:false,sh:true,off:"auditor"},
+    {id:"G",title:"",name:"",rel:"弟",dead:false,sh:true,off:"none"},
+    {id:"H",title:"",name:"",rel:"弟の妻",dead:false,sh:false,off:"none"},
+    {id:"I",title:"【専務取締役】",name:"",rel:"長男",dead:false,sh:true,off:"director"},
+    {id:"J",title:"",name:"",rel:"次男",dead:false,sh:false,off:"none"},
+    {id:"K",title:"",name:"",rel:"長女",dead:false,sh:false,off:"none"},
+    {id:"L",title:"",name:"",rel:"弟の長男",dead:false,sh:false,off:"none"},
+    {id:"Z",title:"",name:"",rel:"弟の長女",dead:false,sh:false,off:"none"},
+  ],
+  C:[{id:"c1",l:"A",r:"B",status:"married"},{id:"c2",l:"C",r:"D",status:"married"},{id:"c3",l:"E",r:"F",status:"married"},{id:"c4",l:"G",r:"H",status:"married"}],
+  P:[{cp:"c1",k:["C"]},{cp:"c2",k:["E","G"]},{cp:"c3",k:["I","J","K"]},{cp:"c4",k:["L","Z"]}]
+};
+
+let members = JSON.parse(JSON.stringify(DEFAULT_DATA.M));
+let couples = JSON.parse(JSON.stringify(DEFAULT_DATA.C));
+let parentChildren = JSON.parse(JSON.stringify(DEFAULT_DATA.P));
+
+let viewBox = {x: -460, y: -30, w: 1000, h: 1000};
+let isPanning = false;
+let panStart = {x: 0, y: 0};
+let selectedPersonId = null;
+
+/* ===== TREE CALCULATION ===== */
+function buildTree(){
+  const isChild = {};
+  parentChildren.forEach(p => p.k.forEach(kid => isChild[kid] = p.cp));
+
+  // Find members who are not children (roots)
+  const rootMembers = members.map(m => m.id).filter(id => !isChild[id]);
+
+  // Helper to get all couples for a person
+  function getCouples(id) {
+    return couples.filter(c => c.l === id || c.r === id);
+  }
+
+  const visitedCouples = new Set();
+  const placedMembers = new Set();
+
+  function createFamilyNode(mainId) {
+    placedMembers.add(mainId);
+    const myCouples = getCouples(mainId).filter(c => !visitedCouples.has(c.id));
+
+    // Sort couples if needed (e.g. by creation order or status to put divorced first, but keep it simple for now)
+    const partners = myCouples.map(c => {
+      visitedCouples.add(c.id);
+      const partnerId = (c.l === mainId) ? c.r : c.l;
+      if (partnerId) placedMembers.add(partnerId);
+
+      const childrenRel = parentChildren.find(p => p.cp === c.id) || {k: []};
+      const childNodes = childrenRel.k.map(kidId => createFamilyNode(kidId));
+
+      return {
+        coupleId: c.id,
+        partnerId: partnerId,
+        status: c.status || 'married',
+        isSingle: partnerId === null || c.status === 'single',
+        children: childNodes
+      };
+    });
+
+    return {
+      mainId,
+      partners
+    };
+  }
+
+  // To avoid duplicates, only start from root members who are part of the first couple, etc.
+  // Actually, just iterate rootMembers and build if they have couples and haven't been placed.
+  const trees = [];
+  rootMembers.forEach(id => {
+    if (!placedMembers.has(id)) {
+      const cpls = getCouples(id);
+      if (cpls.length > 0) {
+        trees.push(createFamilyNode(id));
+      }
+    }
+  });
+
+  const solos = members.filter(m => !placedMembers.has(m.id)).map(m => m.id);
+  return {trees, solos};
+}
+
+
+function measureNodeWidth(node){
+  if(!node) return 0;
+
+  const numPartners = node.partners.length;
+  let adultWidth = BOX_WIDTH;
+  node.partners.forEach(p => {
+    if (!p.isSingle && p.partnerId) adultWidth += SPACING + BOX_WIDTH;
+  });
+
+  if (numPartners === 0) return BOX_WIDTH;
+
+  let totalChildrenWidth = 0;
+  node.partners.forEach((p, idx) => {
+    let cW = 0;
+    p.children.forEach((child, cIdx) => {
+       cW += measureNodeWidth(child);
+       if (cIdx < p.children.length - 1) cW += SIBLING_SPACING;
+    });
+    totalChildrenWidth += cW;
+    if (idx < numPartners - 1 && p.children.length > 0) {
+        totalChildrenWidth += SIBLING_SPACING * 2;
+    }
+  });
+
+  return Math.max(adultWidth, totalChildrenWidth);
+}
+
+function placeNode(node, centerX, y, positions, couplePositions){
+  if(!node) return;
+
+  // Splitting partners into left side and right side of mainId
+  // For standard: older spouses (like divorced) on left, current on right.
+  // Actually, just put first Math.floor(partners.length/2) on left, rest on right.
+  const leftPartners = [];
+  const rightPartners = [];
+  node.partners.forEach((p, i) => {
+    if (i < Math.floor(node.partners.length / 2)) {
+        // we want the first ones to be furthest left, so we prepend or just assign
+        leftPartners.unshift(p); // so furthest left is oldest
+    } else {
+        rightPartners.push(p);
+    }
+  });
+
+  // Calculate widths for left and right adults
+  let leftAdultWidth = 0;
+  leftPartners.forEach(p => { if (!p.isSingle && p.partnerId) leftAdultWidth += BOX_WIDTH + SPACING; });
+  let rightAdultWidth = 0;
+  rightPartners.forEach(p => { if (!p.isSingle && p.partnerId) rightAdultWidth += BOX_WIDTH + SPACING; });
+
+  let adultWidth = leftAdultWidth + BOX_WIDTH + rightAdultWidth;
+
+  // Center mainId
+  let currentX = centerX - adultWidth / 2;
+
+  // Place left partners
+  leftPartners.forEach(p => {
+    if (!p.isSingle && p.partnerId) {
+      positions[p.partnerId] = {x: currentX, y: y};
+
+      couplePositions[p.coupleId] = {
+        centerX: currentX + BOX_WIDTH + SPACING / 2, // drop line between left partner and next person
+        y: y,
+        bottomY: y + BOX_HEIGHT,
+        lineY: y + BOX_HEIGHT / 2,
+        isSingle: false,
+        status: p.status
+      };
+      currentX += BOX_WIDTH + SPACING;
+    } else {
+      couplePositions[p.coupleId] = {
+        centerX: centerX, // single parent drops from mainId
+        y: y, bottomY: y + BOX_HEIGHT, lineY: y + BOX_HEIGHT, isSingle: true, status: p.status
+      };
+    }
+  });
+
+  // Place mainId
+  positions[node.mainId] = {x: currentX, y: y};
+  let mainIdX = currentX;
+  currentX += BOX_WIDTH;
+
+  // Place right partners
+  rightPartners.forEach(p => {
+    if (!p.isSingle && p.partnerId) {
+      currentX += SPACING;
+      positions[p.partnerId] = {x: currentX, y: y};
+
+      couplePositions[p.coupleId] = {
+        centerX: currentX - SPACING / 2, // drop line between previous person and right partner
+        y: y,
+        bottomY: y + BOX_HEIGHT,
+        lineY: y + BOX_HEIGHT / 2,
+        isSingle: false,
+        status: p.status
+      };
+      currentX += BOX_WIDTH;
+    } else {
+      couplePositions[p.coupleId] = {
+        centerX: mainIdX + BOX_WIDTH / 2,
+        y: y, bottomY: y + BOX_HEIGHT, lineY: y + BOX_HEIGHT, isSingle: true, status: p.status
+      };
+    }
+  });
+
+  // Place children
+  // For children layout, we want to center them roughly under their parentDropX
+  // But to avoid overlaps, we just lay them out from left to right across the whole width
+  // starting from centerX - totalChildrenWidth / 2
+
+  // Wait, if left partners drop children from left, and right partners drop from right, it's naturally ordered!
+  // Let's just lay them out sequentially from left to right.
+  const allPartners = [...leftPartners].reverse().concat(rightPartners);
+  // leftPartners was unshifted, so we need to reverse it back to chronological order (left to right)
+
+  let totalChildWidth = 0;
+  const childLayoutInfo = [];
+
+  node.partners.forEach((p, idx) => {
+    if (p.children.length > 0) {
+      let blockWidth = 0;
+      const childWidths = p.children.map(child => measureNodeWidth(child));
+      childWidths.forEach((w, i) => {
+        blockWidth += w;
+        if(i < childWidths.length - 1) blockWidth += SIBLING_SPACING;
+      });
+      childLayoutInfo.push({partner: p, blockWidth, childWidths});
+      totalChildWidth += blockWidth;
+      if (idx < node.partners.length - 1) totalChildWidth += SIBLING_SPACING * 2;
+    } else {
+      childLayoutInfo.push({partner: p, blockWidth: 0, childWidths: []});
+    }
+  });
+
+  const childY = y + BOX_HEIGHT + RELATION_HEIGHT + GENERATION_HEIGHT;
+
+  // Actually, we should just lay out children perfectly centered under their couple's centerX
+  // However, they might overlap if the adult width is smaller than the children width.
+  // The measureNodeWidth ensures there's enough space overall, but the adults are centered around `centerX`.
+  // The simplest working method is to center each child block under `couplePositions[p.coupleId].centerX`!
+  // BUT we must check for collisions between sibling blocks.
+  // Let's use the simpler approach: just start from `centerX - totalChildWidth / 2`
+  // Wait, `node.partners` iteration order matters. `leftPartners` then `rightPartners`.
+  // Wait, in the image, the children (長男, 次男, 長女) are correctly under 妻 and 本人!
+  // The drop line comes from the center of 妻 and 本人, and drops perfectly down to the center of the 3 children.
+  // That looks visually very correct for Japan!
+  // The only thing is we need to ensure "離別" text doesn't clash. Let's make "離別" have a white background, which we already did!
+  let childCurrentX = centerX - totalChildWidth / 2;
+  node.partners.forEach((p, idx) => {
+    const info = childLayoutInfo[idx];
+    if (info.blockWidth > 0) {
+      let px = childCurrentX;
+      // Ideally center this block exactly under the couple's centerX if there's only one partner with kids
+      if (node.partners.length === 1) {
+          px = couplePositions[p.coupleId].centerX - info.blockWidth / 2;
+      }
+      p.children.forEach((child, cIdx) => {
+        const w = info.childWidths[cIdx];
+        placeNode(child, px + w / 2, childY, positions, couplePositions);
+        px += w + SIBLING_SPACING;
+      });
+      childCurrentX += info.blockWidth + SIBLING_SPACING * 2;
+    }
+  });
+}
+
+function calculateLayout(){
+  const {trees, solos} = buildTree();
+  const positions = {};
+  const couplePositions = {};
+
+  const treeWidths = trees.map(t => measureNodeWidth(t));
+  let totalWidth = 0;
+  treeWidths.forEach((w, i) => {
+    totalWidth += w;
+    if(i < treeWidths.length - 1) totalWidth += 48;
+  });
+
+  let startX = -totalWidth / 2;
+  trees.forEach((tree, index) => {
+    const w = treeWidths[index];
+    placeNode(tree, startX + w / 2, 0, positions, couplePositions);
+    startX += w + 48;
+  });
+
+  solos.forEach((soloId, index) => {
+    positions[soloId] = {x: startX + index * (BOX_WIDTH + SIBLING_SPACING), y: 0};
+  });
+
+  return {positions, couplePositions};
+}
+
+/* ===== RENDER ===== */
+function escapeHtml(s){
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderTree(forExport = false){
+  const {positions, couplePositions} = calculateLayout();
+  let svgContent = '';
+  const backgroundFill = forExport ? 'none' : '#e0e0e0'; // Darker gray for the outside area
+
+  // Big background rect for dragging
+  svgContent += `<rect class="bg" x="${viewBox.x - 9000}" y="${viewBox.y - 9000}" width="${viewBox.w + 18000}" height="${viewBox.h + 18000}" fill="${backgroundFill}"/>`;
+
+  // Draw paper guide if not exporting and a specific paper size is selected
+  const paperType = getElement('paperSize') ? getElement('paperSize').value : 'A4H';
+  if (!forExport && paperType !== 'auto') {
+      const paperAspects = {
+          'A4V': 2480 / 3508,
+          'A4H': 3508 / 2480,
+          'A3V': 3508 / 4960,
+          'A3H': 4960 / 3508
+      };
+      const aspect = paperAspects[paperType];
+
+      // Calculate bounding box of the tree to center the paper around it
+      let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+      members.forEach(m => {
+        const pos = positions[m.id];
+        if(!pos || pos.x === -9999) return;
+        minX = Math.min(minX, pos.x);
+        minY = Math.min(minY, pos.y);
+        maxX = Math.max(maxX, pos.x + BOX_WIDTH);
+        maxY = Math.max(maxY, pos.y + BOX_HEIGHT);
+      });
+      if (minX !== 1e9) {
+          const tw = maxX - minX;
+          const th = maxY - minY;
+          const cx = minX + tw / 2;
+          const cy = minY + th / 2;
+
+          // Determine paper size in SVG coordinates based on tree size + margin
+          let pw, ph;
+          if (tw / th > aspect) {
+              pw = tw * 1.1; // 10% margin
+              ph = pw / aspect;
+          } else {
+              ph = th * 1.1;
+              pw = ph * aspect;
+          }
+
+          svgContent += `<rect x="${cx - pw/2}" y="${cy - ph/2}" width="${pw}" height="${ph}" fill="#ffffff" stroke="#ccc" stroke-width="2" pointer-events="none"/>`;
+      }
+  } else if (!forExport && paperType === 'auto') {
+      // Just make the whole background white if auto
+      svgContent += `<rect x="${viewBox.x - 9000}" y="${viewBox.y - 9000}" width="${viewBox.w + 18000}" height="${viewBox.h + 18000}" fill="#ffffff" pointer-events="none"/>`;
+  }
+
+
+  // --- LINES ---
+  couples.forEach(c => {
+    if(c.status === 'single') return;
+    const leftPos = positions[c.l];
+    const rightPos = positions[c.r];
+    if(!leftPos || !rightPos || leftPos.x === -9999 || rightPos.x === -9999) return;
+
+    const x1 = Math.min(leftPos.x, rightPos.x) + BOX_WIDTH;
+    const x2 = Math.max(leftPos.x, rightPos.x);
+    let y = leftPos.y + BOX_HEIGHT / 2;
+
+    // If they are not adjacent (meaning another person is between them)
+    if (x2 - x1 > SPACING + 2) {
+        // Route the line slightly lower or higher to avoid striking through the person in between.
+        // Let's route it behind, but SVG doesn't have z-index, it's drawn first.
+        // Actually, let's just draw an arched line or drop it down a bit.
+        // Easiest is to draw a bracket-like line: go down from main, horizontal, then up to partner.
+        // Or just let it cross but ensure the boxes have white background (they do).
+        // Since boxes have white background and are drawn AFTER lines, the line will be hidden BEHIND the box!
+        // Wait, the image shows the line crossing the box?
+        // Ah, the image doesn't show a line crossing through the box because the box has fill="#fff" or "#FFFF99".
+        // But the text "離別" might overlap?
+        // Wait, the children of E and New Spouse:
+        // In the layout `calculateLayout`, `parentDropX` is `currentX - SPACING / 2`.
+        // This means it drops from the line segment right before the partner.
+        // So for New Spouse (at 192), parentDropX is 192 - 8 = 184.
+        // That is correct! It drops from between F and New Spouse?
+        // No, currentX before partner is 96+80=176. + SPACING(16) = 192. parentDropX = 192 - 8 = 184.
+        // So it drops between F and New Spouse.
+
+        svgContent += `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="#000" stroke-width="1"/>`;
+    } else {
+        svgContent += `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="#000" stroke-width="1"/>`;
+    }
+
+    if (c.status === 'divorced' || c.status === 'bereaved') {
+      const cx = (x1 + x2) / 2;
+      const text = c.status === 'divorced' ? '離別' : '死別';
+      svgContent += `<rect x="${cx - 12}" y="${y - 8}" width="24" height="16" fill="#ffffff" />`;
+      svgContent += `<text x="${cx}" y="${y + 1}" text-anchor="middle" dominant-baseline="central" font-family="${FONT_FAMILY}" font-size="10" fill="#666">${text}</text>`;
+    }
+  });
+
+  parentChildren.forEach(p => {
+    const coupleInfo = couplePositions[p.cp];
+    if(!coupleInfo) return;
+
+    const parentDropX = coupleInfo.centerX;
+    // Step 2: Fix lines not connecting. Start the line from the middle horizontal line, not the bottom.
+    const parentDropY = coupleInfo.lineY;
+
+    const kids = p.k.map(kidId => {
+      const kidPos = positions[kidId];
+      if(!kidPos) return null;
+      const kidCouple = couples.find(c => c.l === kidId || c.r === kidId);
+      const kidCenterX = kidPos.x + BOX_WIDTH / 2;
+      return {centerX: kidCenterX, topY: kidPos.y};
+    }).filter(Boolean);
+
+    if(!kids.length) return;
+
+    const lowestTopY = Math.min(...kids.map(k => k.topY));
+    const horizontalBarY = coupleInfo.bottomY + RELATION_HEIGHT + (lowestTopY - coupleInfo.bottomY - RELATION_HEIGHT) / 2;
+
+    // Line going down from parent couple
+    svgContent += `<line x1="${parentDropX}" y1="${parentDropY}" x2="${parentDropX}" y2="${horizontalBarY}" stroke="#000" stroke-width="1"/>`;
+
+    if(kids.length === 1){
+      const k = kids[0];
+      if(Math.abs(k.centerX - parentDropX) > 1){
+         svgContent += `<line x1="${parentDropX}" y1="${horizontalBarY}" x2="${k.centerX}" y2="${horizontalBarY}" stroke="#000" stroke-width="1"/>`;
+      }
+      svgContent += `<line x1="${k.centerX}" y1="${horizontalBarY}" x2="${k.centerX}" y2="${k.topY}" stroke="#000" stroke-width="1"/>`;
+    } else {
+      const xCoords = kids.map(k => k.centerX);
+      const minX = Math.min(...xCoords);
+      const maxX = Math.max(...xCoords);
+
+      // Horizontal bar
+      svgContent += `<line x1="${minX}" y1="${horizontalBarY}" x2="${maxX}" y2="${horizontalBarY}" stroke="#000" stroke-width="1"/>`;
+
+      // Vertical lines down to children
+      kids.forEach(k => {
+        svgContent += `<line x1="${k.centerX}" y1="${horizontalBarY}" x2="${k.centerX}" y2="${k.topY}" stroke="#000" stroke-width="1"/>`;
+      });
+    }
+  });
+
+  // --- BOXES ---
+  members.forEach(member => {
+    const pos = positions[member.id];
+    if(!pos || pos.x === -9999) return;
+    const {x, y} = pos;
+
+    const isOfficer = member.off === 'director' || member.off === 'auditor';
+    const bgColor = isOfficer ? COLOR_YELLOW : '#fff';
+    const isSelected = selectedPersonId === member.id;
+
+    if(member.sh){
+      svgContent += `<rect x="${x - 4}" y="${y - 4}" width="${BOX_WIDTH + 8}" height="${BOX_HEIGHT + 8}" fill="none" stroke="#000" stroke-width="1"/>`;
+    }
+
+    svgContent += `<rect x="${x}" y="${y}" width="${BOX_WIDTH}" height="${BOX_HEIGHT}" fill="${bgColor}" stroke="#000" stroke-width="${member.sh ? 1.5 : 1}" data-id="${member.id}" class="person-box" style="cursor:pointer"/>`;
+
+    if(isSelected){
+      svgContent += `<rect x="${x - 7}" y="${y - 7}" width="${BOX_WIDTH + 14}" height="${BOX_HEIGHT + 14}" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 3" rx="2"/>`;
+    }
+
+    const columns = [];
+    if(member.title) columns.push({text: member.title, fontSize: 10.5, color: '#000', type: 'title'});
+    if(member.name) columns.push({text: member.name, fontSize: 13, color: '#000', type: 'name'});
+    if(member.dead) columns.push({text: '（故人）', fontSize: 9, color: '#666', type: 'dead'});
+
+    columns.forEach((col, colIndex) => {
+      const textX = x + BOX_WIDTH - 14 - colIndex * 18;
+      [...col.text].forEach((char, charIndex) => {
+        let textY = y + 12 + col.fontSize * 0.6 + charIndex * col.fontSize * 1.28;
+        if (col.type === 'name') {
+            textY += col.fontSize * 1.28; // indent by 1 character
+        }
+        const rotate = /[ー（）()【】\-−〜～]/.test(char);
+        const transform = rotate ? ` transform="rotate(90,${textX},${textY})"` : '';
+        svgContent += `<text x="${textX}" y="${textY}" text-anchor="middle" dominant-baseline="central" font-family="${FONT_FAMILY}" font-size="${col.fontSize}" fill="${col.color}"${transform} style="pointer-events:none">${escapeHtml(char)}</text>`;
+      });
+    });
+
+    svgContent += `<text x="${x + 2}" y="${y + BOX_HEIGHT + 14}" font-family="${FONT_FAMILY}" font-size="11" fill="#333" style="pointer-events:none">${escapeHtml(member.rel)}</text>`;
+  });
+
+  // --- LEGEND for export ---
+  if(forExport){
+    const hasDirector = members.some(m => m.off === 'director');
+    const hasAuditor = members.some(m => m.off === 'auditor');
+    const hasShareholder = members.some(m => m.sh);
+
+    let legendText = '';
+    if(hasDirector && hasAuditor) legendText = '：貴社取締役・監査役';
+    else if(hasDirector) legendText = '：貴社取締役';
+    else if(hasAuditor) legendText = '：貴社監査役';
+
+    const legendX = viewBox.x + viewBox.w - 200;
+    const legendY = viewBox.y + viewBox.h - 60;
+
+    if(legendText){
+      svgContent += `<rect x="${legendX}" y="${legendY}" width="38" height="14" fill="${COLOR_YELLOW}" stroke="#000" stroke-width="1"/>`;
+      svgContent += `<text x="${legendX + 44}" y="${legendY + 11}" font-family="${FONT_FAMILY}" font-size="11" fill="#333">${legendText}</text>`;
+    }
+
+    if(hasShareholder){
+      const shareLegendY = legendText ? legendY + 22 : legendY;
+      svgContent += `<rect x="${legendX}" y="${shareLegendY}" width="38" height="14" fill="#fff" stroke="#000" stroke-width="1.5"/>`;
+      svgContent += `<rect x="${legendX - 3}" y="${shareLegendY - 3}" width="44" height="20" fill="none" stroke="#000" stroke-width="1"/>`;
+      svgContent += `<text x="${legendX + 44}" y="${shareLegendY + 11}" font-family="${FONT_FAMILY}" font-size="11" fill="#333">：貴社株主</text>`;
+    }
+  }
+
+  const svgElement = getElement('sv');
+  svgElement.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+  svgElement.innerHTML = svgContent;
+
+  if(!forExport){
+    svgElement.querySelectorAll('.person-box').forEach(el => {
+      el.addEventListener('click', e => {
+        e.stopPropagation();
+        selectPerson(el.dataset.id);
+      });
+      el.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        showContextMenu(e, el.dataset.id);
+      });
+    });
+
+    svgElement.querySelectorAll('.bg').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        selectedPersonId = null;
+        closeEditPanel();
+        hideContextMenu();
+        renderTree();
+        startPanning(e);
+      });
+    });
+    updateLegendHTML();
+  }
+}
+
+/* ===== HTML LEGEND ===== */
+function updateLegendHTML(){
+  const hasDirector = members.some(m => m.off === 'director');
+  const hasAuditor = members.some(m => m.off === 'auditor');
+  const hasShareholder = members.some(m => m.sh);
+
+  let html = '';
+  if(hasDirector || hasAuditor){
+    let t = '';
+    if(hasDirector && hasAuditor) t = '貴社取締役・監査役';
+    else if(hasDirector) t = '貴社取締役';
+    else t = '貴社監査役';
+    html += `<div class="lrow"><span class="lbox" style="background:${COLOR_YELLOW}"></span>：${t}</div>`;
+  }
+
+  if(hasShareholder){
+    html += `<div class="lrow"><span class="lbox db" style="background:#fff"></span>：貴社株主</div>`;
+  }
+
+  const legendElement = getElement('legend');
+  legendElement.innerHTML = html;
+  legendElement.style.display = (hasDirector || hasAuditor || hasShareholder) ? 'block' : 'none';
+}
+
+/* ===== CONTEXT MENU ===== */
+function showContextMenu(e, id){
+  selectedPersonId = id;
+  const member = members.find(m => m.id === id);
+  if(!member) return;
+
+  const ctxMenu = getElement('ctx');
+  let html = '';
+
+  const couple = couples.find(c => c.l === id || c.r === id);
+  if(couple){
+    html += `<div onclick="quickAdd('child','${couple.id}')">＋ この夫婦の子を追加</div>`;
+  }
+
+  html += `<div onclick="quickAdd('spouse','${id}')">＋ 配偶者を追加</div>`;
+
+  const parentRelation = parentChildren.find(p => p.k.includes(id));
+  if(parentRelation){
+    html += `<div onclick="quickAdd('sibling','${parentRelation.cp}')">＋ 兄弟を追加</div>`;
+  }
+
+  html += `<div onclick="selectPerson('${id}');hideContextMenu()">編集</div>`;
+  html += `<div onclick="deletePersonById('${id}')" style="color:#c33">削除</div>`;
+
+  ctxMenu.innerHTML = html;
+  ctxMenu.style.left = e.clientX + 'px';
+  ctxMenu.style.top = e.clientY + 'px';
+  ctxMenu.style.display = 'block';
+}
+
+function hideContextMenu(){
+  getElement('ctx').style.display = 'none';
+}
+document.addEventListener('click', hideContextMenu);
+
+function quickAdd(type, referenceId){
+  hideContextMenu();
+  saveUndoSnapshot();
+
+  let relText = '親族';
+  let refMember = null;
+  let partnerMember = null;
+
+  if (type === 'spouse' || type === 'single_child' || type === 'sibling') {
+      refMember = members.find(m => m.id === referenceId);
+      relText = guessRelation(refMember, type);
+  } else if (type === 'child') {
+      // referenceId is a coupleId
+      const couple = couples.find(c => c.id === referenceId);
+      if (couple) {
+          refMember = members.find(m => m.id === couple.l);
+          partnerMember = members.find(m => m.id === couple.r);
+          relText = guessRelation(refMember, type, partnerMember);
+      }
+  }
+
+  const newMember = {
+    id: generateId(),
+    title: '',
+    name: '',
+    rel: relText,
+    dead: false,
+    sh: false,
+    off: 'none'
+  };
+  members.push(newMember);
+
+  if(type === 'child' || type === 'sibling'){
+    const existingRelation = parentChildren.find(p => p.cp === referenceId);
+    if(existingRelation) {
+      existingRelation.k.push(newMember.id);
+    } else {
+      parentChildren.push({cp: referenceId, k: [newMember.id]});
+    }
+  } else if(type === 'spouse'){
+    couples.push({id: generateId(), l: referenceId, r: newMember.id, status: 'married'});
+  } else if(type === 'single_child'){
+    const newCoupleId = generateId();
+    couples.push({id: newCoupleId, l: referenceId, r: null, status: 'single'});
+    parentChildren.push({cp: newCoupleId, k: [newMember.id]});
+  }
+
+  selectedPersonId = newMember.id;
+  resetView(); // Auto-fit to show the new person
+  showEditPanel();
+  showToast('追加しました');
+}
+
+/* ===== PAN/ZOOM ===== */
+function startPanning(e){
+  isPanning = true;
+  panStart = {x: e.clientX, y: e.clientY};
+}
+
+document.addEventListener('mousemove', e => {
+  if(!isPanning) return;
+  const rect = getElement('sv').getBoundingClientRect();
+  viewBox.x -= (e.clientX - panStart.x) * (viewBox.w / rect.width);
+  viewBox.y -= (e.clientY - panStart.y) * (viewBox.h / rect.height);
+  panStart = {x: e.clientX, y: e.clientY};
+  renderTree();
+});
+
+document.addEventListener('mouseup', () => isPanning = false);
+
+// Step 4: Zoom towards mouse cursor
+getElement('cw').addEventListener('wheel', e => {
+  e.preventDefault();
+
+  const rect = getElement('sv').getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+
+  // Calculate relative position of mouse inside the viewBox
+  const viewBoxMouseX = viewBox.x + (mouseX / rect.width) * viewBox.w;
+  const viewBoxMouseY = viewBox.y + (mouseY / rect.height) * viewBox.h;
+
+  // Zoom factor
+  const scale = e.deltaY > 0 ? 1.06 : 0.94;
+
+  viewBox.w *= scale;
+  viewBox.h *= scale;
+
+  // Adjust viewBox x and y to keep mouse position in same place
+  viewBox.x = viewBoxMouseX - (mouseX / rect.width) * viewBox.w;
+  viewBox.y = viewBoxMouseY - (mouseY / rect.height) * viewBox.h;
+
+  renderTree();
+}, {passive: false});
+
+getElement('sv').addEventListener('mousedown', e => {
+  if(e.target.tagName === 'svg'){
+    selectedPersonId = null;
+    closeEditPanel();
+    hideContextMenu();
+    renderTree();
+    startPanning(e);
+  }
+});
+
+function resetView(){
+  const {positions} = calculateLayout();
+  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+  members.forEach(m => {
+    const pos = positions[m.id];
+    if(!pos || pos.x === -9999) return;
+    minX = Math.min(minX, pos.x);
+    minY = Math.min(minY, pos.y);
+    maxX = Math.max(maxX, pos.x + BOX_WIDTH);
+    maxY = Math.max(maxY, pos.y + BOX_HEIGHT);
+  });
+  if (minX === 1e9) {
+      viewBox = {x: -460, y: -30, w: 1000, h: 1000};
+  } else {
+      const w = maxX - minX;
+      const h = maxY - minY;
+      // Add 100px padding around
+      viewBox = {x: minX - 100, y: minY - 100, w: w + 200, h: Math.max(h + 200, (w + 200) * (getElement('sv').clientHeight / (getElement('sv').clientWidth || 1)))};
+  }
+  renderTree();
+}
+
+/* ===== EDIT PANEL & TEXT INPUT FIX ===== */
+function selectPerson(id){
+  selectedPersonId = id;
+  showEditPanel();
+  renderTree();
+}
+
+function showEditPanel(){
+  const member = members.find(m => m.id === selectedPersonId);
+  if(!member) return;
+
+  getElement('editTitle').value = member.title || '';
+  getElement('editName').value = member.name || '';
+  getElement('editRelation').value = member.rel || '';
+  getElement('editDead').checked = member.dead;
+  getElement('editShareholder').checked = member.sh;
+  getElement('editOfficer').value = member.off || 'none';
+
+  const myCouples = couples.filter(c => c.l === member.id || c.r === member.id);
+  if(myCouples.length > 0) {
+    document.getElementById('coupleStatusWrapper').style.display = 'block';
+    // If we clicked a spouse, they usually have 1 couple. If we clicked main person, edit their first couple or let them edit via clicking the spouse.
+    document.getElementById('editCoupleStatus').value = myCouples[0].status || 'married';
+  } else {
+    document.getElementById('coupleStatusWrapper').style.display = 'none';
+  }
+
+
+  let actionsHtml = '';
+  const couple = couples.find(c => c.l === member.id || c.r === member.id);
+  if(couple){
+    actionsHtml += `<button class="act-btn add" onclick="quickAdd('child','${couple.id}')">＋ この夫婦の子を追加</button>`;
+  }
+
+  actionsHtml += `<button class="act-btn add" onclick="quickAdd('spouse','${member.id}')">＋ 配偶者を追加</button>`;
+
+  const parentRelation = parentChildren.find(p => p.k.includes(member.id));
+  if(parentRelation){
+    actionsHtml += `<button class="act-btn add" onclick="quickAdd('sibling','${parentRelation.cp}')">＋ 兄弟を追加</button>`;
+  }
+
+  getElement('ep-actions').innerHTML = actionsHtml;
+
+  let orderHtml = '';
+  if(parentRelation && parentRelation.k.length > 1){
+    const index = parentRelation.k.indexOf(member.id);
+    orderHtml += `<div style="font-size:10px;color:#666;margin-bottom:3px">並び順</div>`;
+    if(index > 0){
+      orderHtml += `<button class="act-btn mv" onclick="reorderSiblings('${parentRelation.cp}','${member.id}',-1)">◀ 左へ</button> `;
+    }
+    if(index < parentRelation.k.length - 1){
+      orderHtml += `<button class="act-btn mv" onclick="reorderSiblings('${parentRelation.cp}','${member.id}',1)">右へ ▶</button>`;
+    }
+  }
+  getElement('ep-order').innerHTML = orderHtml;
+  getElement('editPanel').style.display = 'block';
+}
+
+function closeEditPanel(){
+  getElement('editPanel').style.display = 'none';
+  selectedPersonId = null;
+  renderTree();
+}
+
+// Step 3: Text Input Undo Fix
+let isEditingText = false;
+let preEditStateSaved = false;
+
+function startEdit() {
+  if (!preEditStateSaved) {
+    saveUndoSnapshot();
+    preEditStateSaved = true;
+  }
+}
+
+// Real-time update on screen, but without generating multiple undo states
+function liveUpdateEdit(key, value){
+  const member = members.find(m => m.id === selectedPersonId);
+  if(!member) return;
+  if(member[key] === value) return;
+  member[key] = value;
+  renderTree();
+  markAsDirty();
+}
+
+// Save the state after focus is lost or value is confirmed
+function commitEdit(key, value){
+  // Update state immediately if not already matching
+  liveUpdateEdit(key, value);
+  preEditStateSaved = false; // Reset for next edit focus
+}
+
+function commitEditCheckbox(key, value){
+  saveUndoSnapshot();
+  const member = members.find(m => m.id === selectedPersonId);
+  if(!member) return;
+  member[key] = value;
+  renderTree();
+}
+
+function reorderSiblings(cpId, memberId, direction){
+  saveUndoSnapshot();
+  const p = parentChildren.find(p => p.cp === cpId);
+  if(!p) return;
+  const index = p.k.indexOf(memberId);
+  const targetIndex = index + direction;
+
+  if(targetIndex < 0 || targetIndex >= p.k.length) return;
+
+  [p.k[index], p.k[targetIndex]] = [p.k[targetIndex], p.k[index]];
+  renderTree();
+  showEditPanel();
+}
+
+function promptDeletePerson(){
+  if(!selectedPersonId) return;
+  const member = members.find(m => m.id === selectedPersonId);
+  if(!confirm(`「${member ? member.rel : ''}」を削除しますか？`)) return;
+  deletePersonById(selectedPersonId);
+}
+
+function deletePersonById(id){
+  saveUndoSnapshot();
+  members = members.filter(m => m.id !== id);
+
+  const removedCouples = couples.filter(c => c.l === id || c.r === id).map(c => c.id);
+  couples = couples.filter(c => c.l !== id && c.r !== id);
+
+  parentChildren = parentChildren
+    .filter(p => !removedCouples.includes(p.cp))
+    .map(p => ({...p, k: p.k.filter(k => k !== id)}))
+    .filter(p => p.k.length > 0);
+
+  selectedPersonId = null;
+  closeEditPanel();
+  hideContextMenu();
+  showToast('削除しました');
+}
+
+
+window._runVerificationTest = function() {
+    members.push({id: "M_new", title: "", name: "未婚の子", rel: "長女の子", dead: false, sh: false, off: "none"});
+    couples.push({id: "c_single", l: "K", r: null, status: "single"});
+    parentChildren.push({cp: "c_single", k: ["M_new"]});
+
+    const cp1 = couples.find(c => c.id === "c1");
+    if(cp1) cp1.status = "divorced";
+
+    const cp2 = couples.find(c => c.id === "c2");
+    if(cp2) cp2.status = "bereaved";
+
+    renderTree();
+};
+
+function commitCoupleStatus(value){
+  saveUndoSnapshot();
+  const myCouples = couples.filter(c => c.l === selectedPersonId || c.r === selectedPersonId);
+  if(myCouples.length === 0) return;
+  myCouples[0].status = value; // Edit the first couple for now
+  renderTree();
+}
+
+
+/* ===== RELATION GUESSING ===== */
+function guessRelation(refMember, type, partnerMember = null) {
+  if (!refMember) return "親族";
+  const refRel = refMember.rel || "";
+
+  if (type === 'spouse') {
+    if (refRel === "本人") return "妻/夫";
+    if (refRel === "父") return "母";
+    if (refRel === "母") return "父";
+    if (refRel === "祖父") return "祖母";
+    if (refRel === "祖母") return "祖父";
+    if (refRel.includes("長男") || refRel.includes("次男") || refRel.includes("弟") || refRel.includes("兄")) return refRel + "の妻";
+    if (refRel.includes("長女") || refRel.includes("次女") || refRel.includes("妹") || refRel.includes("姉")) return refRel + "の夫";
+    return "配偶者";
+  }
+
+  if (type === 'child' || type === 'single_child') {
+    // If reference is a couple (child of A & B)
+    if (refRel === "本人" || (partnerMember && partnerMember.rel === "本人")) return "子";
+    if (refRel === "父" || refRel === "母") return "兄弟姉妹";
+    if (refRel === "祖父" || refRel === "祖母") return "おじ/おば";
+
+    // If child of child
+    if (refRel === "子" || refRel.includes("男") || refRel.includes("女")) return "孫";
+
+    // Default fallback based on reference
+    if (refRel) return refRel + "の子";
+    return "子";
+  }
+
+  if (type === 'sibling') {
+    if (refRel === "本人") return "兄弟姉妹";
+    if (refRel === "父") return "おじ/おば";
+    if (refRel === "母") return "おじ/おば";
+    if (refRel.includes("子") || refRel.includes("男") || refRel.includes("女")) return "子"; // Siblings of my children are my children
+    return "親族";
+  }
+
+  return "親族";
+}
+
+/* ===== ADD DIALOG ===== */
+let _addPreRef = null;
+
+function showAddDialog(preMode, preRef){
+  getElement('addDialog').style.display = 'block';
+  getElement('addMode').value = preMode || 'child';
+  _addPreRef = preRef || null;
+  onAddModeChange();
+}
+
+function closeAddDialog(){
+  getElement('addDialog').style.display = 'none';
+  _addPreRef = null;
+}
+
+function onAddModeChange(){
+  const mode = getElement('addMode').value;
+  getElement('addParentWrapper').style.display = mode === 'child' ? '' : 'none';
+  getElement('addSpouseWrapper').style.display = mode === 'spouse' ? '' : 'none';
+
+  if(mode === 'child'){
+    getElement('addParent').innerHTML = couples.map(c => {
+      const left = members.find(m => m.id === c.l);
+      const right = members.find(m => m.id === c.r);
+      return `<option value="${c.id}">${left ? left.rel : '?'} ＆ ${right ? right.rel : '?'}</option>`;
+    }).join('');
+    if(_addPreRef) getElement('addParent').value = _addPreRef;
+
+    // Auto-fill relation
+    const cId = getElement('addParent').value;
+    if (cId) {
+        const couple = couples.find(c => c.id === cId);
+        const refM = members.find(m => m.id === couple?.l);
+        const partM = members.find(m => m.id === couple?.r);
+        getElement('addRelation').value = guessRelation(refM, 'child', partM);
+    }
+  } else if(mode === 'spouse'){
+    const inCouples = new Set();
+    couples.forEach(c => { inCouples.add(c.l); inCouples.add(c.r); });
+
+    const availableSpouses = members.filter(m => !inCouples.has(m.id));
+    getElement('addSpouse').innerHTML = '<option value="">選択</option>' + availableSpouses.map(m =>
+      `<option value="${m.id}">${m.rel}${m.name ? ' ' + m.name : ''}</option>`
+    ).join('');
+    if(_addPreRef) getElement('addSpouse').value = _addPreRef;
+
+    // Auto-fill relation
+    const sId = getElement('addSpouse').value;
+    if (sId) {
+        const refM = members.find(m => m.id === sId);
+        getElement('addRelation').value = guessRelation(refM, 'spouse');
+    }
+  } else if (mode === 'solo') {
+    getElement('addRelation').value = '親族';
+  }
+}
+
+// Add event listeners to the select dropdowns to update the relation text when changed
+document.getElementById('addParent').addEventListener('change', onAddModeChange);
+document.getElementById('addSpouse').addEventListener('change', onAddModeChange);
+
+
+function executeAdd(){
+  saveUndoSnapshot();
+  const mode = getElement('addMode').value;
+  const rel = getElement('addRelation').value || '親族';
+
+  const newMember = {
+    id: generateId(),
+    title: '',
+    name: '',
+    rel: rel,
+    dead: false,
+    sh: false,
+    off: 'none'
+  };
+  members.push(newMember);
+
+  if(mode === 'child'){
+    const coupleId = getElement('addParent').value;
+    const existingRelation = parentChildren.find(p => p.cp === coupleId);
+    if(existingRelation){
+      existingRelation.k.push(newMember.id);
+    } else {
+      parentChildren.push({cp: coupleId, k: [newMember.id]});
+    }
+  } else if(mode === 'spouse'){
+    const spouseId = getElement('addSpouse').value;
+    if(spouseId){
+      couples.push({id: generateId(), l: spouseId, r: newMember.id});
+    }
+  }
+
+  closeAddDialog();
+  selectedPersonId = newMember.id;
+  resetView(); // Auto-fit to show the new person
+  showEditPanel();
+  showToast('追加しました');
+}
+
+/* ===== PNG ===== */
+function exportToPNG(){
+  const {positions} = calculateLayout();
+  let minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+
+  members.forEach(m => {
+    const pos = positions[m.id];
+    if(!pos) return;
+    const padding = m.sh ? 6 : 2;
+    minX = Math.min(minX, pos.x - padding);
+    minY = Math.min(minY, pos.y - padding);
+    maxX = Math.max(maxX, pos.x + BOX_WIDTH + padding);
+    maxY = Math.max(maxY, pos.y + BOX_HEIGHT + RELATION_HEIGHT + padding);
+  });
+
+  const margin = 20;
+  minX -= margin; minY -= margin; maxX += margin; maxY += margin;
+
+  const hasDirector = members.some(m => m.off === 'director');
+  const hasAuditor = members.some(m => m.off === 'auditor');
+  const hasShareholder = members.some(m => m.sh);
+
+  maxY += ((hasDirector || hasAuditor) ? 22 : 0) + (hasShareholder ? 26 : 0) + 10;
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const scale = 4; // High resolution for A4 Word printing
+
+  const oldViewBox = {...viewBox};
+  const oldSelected = selectedPersonId;
+
+  selectedPersonId = null;
+  viewBox = {x: minX, y: minY, w: width, h: height};
+  renderTree(true);
+
+  const svgElement = getElement('sv');
+  const svgData = new XMLSerializer().serializeToString(svgElement);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const ctx = canvas.getContext('2d');
+
+  const img = new Image();
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = '家系図.png';
+      a.click();
+
+      // Restore
+      viewBox = oldViewBox;
+      selectedPersonId = oldSelected;
+      renderTree();
+      showToast('PNG出力しました');
+    }, 'image/png');
+  };
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent('<?xml version="1.0" encoding="UTF-8"?>' + svgData);
+}
+
+/* ===== INIT ===== */
+saveUndoSnapshot();
+renderTree();
+updatePageTitle();
+setTimeout(checkAutoBackup, 100); // Check for backup shortly after load
+</script>
+</body>
+</html>
