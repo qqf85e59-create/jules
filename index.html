@@ -411,6 +411,7 @@ function buildTree(){
         coupleId: c.id,
         partnerId: partnerId,
         status: c.status || 'married',
+        swapped: !!c.swapped,
         isSingle: partnerId === null || c.status === 'single',
         children: childNodes
       };
@@ -830,14 +831,22 @@ function renderTree(forExport = false){
     if(member.name) columns.push({text: member.name, fontSize: 13, color: '#000', type: 'name'});
     if(member.dead) columns.push({text: '（故人）', fontSize: 9, color: '#666', type: 'dead'});
 
-    const colSpacing = 18;
-    // Total width of all columns combined
-    const totalColsWidth = columns.length > 0 ? (columns.length - 1) * colSpacing : 0;
-    // The starting X position (for the rightmost column) to center the group in BOX_WIDTH
-    const startTextX = x + BOX_WIDTH / 2 + totalColsWidth / 2;
-
     columns.forEach((col, colIndex) => {
-      const textX = startTextX - colIndex * colSpacing;
+      let textX;
+      if (col.type === 'title') {
+        textX = x + BOX_WIDTH - 14; // 肩書きは右上
+      } else if (col.type === 'name') {
+        // 名前は中央
+        textX = x + BOX_WIDTH / 2;
+        // If there's no title, we might want to shift name slightly right, but user asked for "name indented".
+        // Let's keep it in the center. If there's no dead, it's just center.
+      } else if (col.type === 'dead') {
+        // 故人は左
+        textX = x + 16;
+      } else {
+        textX = x + BOX_WIDTH / 2 - colIndex * 18; // fallback
+      }
+
       [...col.text].forEach((char, charIndex) => {
         let textY = y + 12 + col.fontSize * 0.6 + charIndex * col.fontSize * 1.28;
         if (col.type === 'name') {
@@ -849,7 +858,8 @@ function renderTree(forExport = false){
       });
     });
 
-    svgContent += `<text x="${x + BOX_WIDTH / 2}" y="${y + BOX_HEIGHT + 14}" text-anchor="middle" font-family="${FONT_FAMILY}" font-size="11" fill="#333" style="pointer-events:none">${escapeHtml(member.rel)}</text>`;
+    // 続柄は左下 (Left bottom)
+    svgContent += `<text x="${x + 4}" y="${y + BOX_HEIGHT + 14}" text-anchor="start" font-family="${FONT_FAMILY}" font-size="11" fill="#333" style="pointer-events:none">${escapeHtml(member.rel)}</text>`;
   });
 
   // --- LEGEND for export ---
