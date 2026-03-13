@@ -100,6 +100,7 @@ body{font-family:'Meiryo UI', sans-serif;background:#f7f7f7;overflow:hidden;heig
     <select id="editCoupleStatus" onchange="commitCoupleStatus(this.value)">
       <option value="married">婚姻中</option><option value="divorced">離別</option><option value="bereaved">死別</option><option value="single">単独親(未婚等)</option>
     </select>
+    <button class="act-btn mv" id="editCoupleSwap" onclick="toggleCoupleSwap()" style="width:100%; margin-top:5px;">この夫婦の左右を入替</button>
   </div>
   <div class="sep" id="ep-actions"></div>
   <div class="sep" id="ep-order"></div>
@@ -502,24 +503,46 @@ function placeNode(node, centerX, y, positions, couplePositions){
   // Center mainId
   let currentX = centerX - adultWidth / 2;
 
+  // Helper to get max Y lines for couples considering shareholders
+  function getCoupleYInfo(m1, m2) {
+    const isSh1 = m1 ? m1.sh : false;
+    const isSh2 = m2 ? m2.sh : false;
+    const isAnySh = isSh1 || isSh2;
+    // Horizontal line passes through center of outer box if either is shareholder
+    const lineY = isAnySh ? y + (BOX_HEIGHT + 8) / 2 : y + BOX_HEIGHT / 2;
+    // Drop line starts from bottom of outer box if either is shareholder
+    const bottomY = isAnySh ? y + BOX_HEIGHT + 4 : y + BOX_HEIGHT;
+    // In single parents, it drops from the individual
+    const singleLineY = isSh1 ? y + BOX_HEIGHT + 4 : y + BOX_HEIGHT;
+    const singleBottomY = isSh1 ? y + BOX_HEIGHT + 4 : y + BOX_HEIGHT;
+    return {lineY, bottomY, singleLineY, singleBottomY};
+  }
+
   // Place left partners
   leftPartners.forEach(p => {
     if (!p.isSingle && p.partnerId) {
       positions[p.partnerId] = {x: currentX, y: y};
+      const p1 = members.find(m => m.id === p.partnerId);
+      const p2 = members.find(m => m.id === node.mainId); // left partner connects to mainId (or the chain towards it)
+      const {lineY, bottomY} = getCoupleYInfo(p1, p2);
 
       couplePositions[p.coupleId] = {
         centerX: currentX + BOX_WIDTH + SPACING / 2, // drop line between left partner and next person
         y: y,
-        bottomY: y + BOX_HEIGHT,
-        lineY: y + BOX_HEIGHT / 2,
+        bottomY: bottomY,
+        lineY: lineY,
         isSingle: false,
-        status: p.status
+        status: p.status,
+        leftPerson: p.partnerId,
+        rightPerson: node.mainId
       };
       currentX += BOX_WIDTH + SPACING;
     } else {
+      const p1 = members.find(m => m.id === node.mainId);
+      const {singleLineY, singleBottomY} = getCoupleYInfo(p1, null);
       couplePositions[p.coupleId] = {
         centerX: centerX, // single parent drops from mainId
-        y: y, bottomY: y + BOX_HEIGHT, lineY: y + BOX_HEIGHT, isSingle: true, status: p.status
+        y: y, bottomY: singleBottomY, lineY: singleLineY, isSingle: true, status: p.status
       };
     }
   });
@@ -534,20 +557,27 @@ function placeNode(node, centerX, y, positions, couplePositions){
     if (!p.isSingle && p.partnerId) {
       currentX += SPACING;
       positions[p.partnerId] = {x: currentX, y: y};
+      const p1 = members.find(m => m.id === node.mainId);
+      const p2 = members.find(m => m.id === p.partnerId);
+      const {lineY, bottomY} = getCoupleYInfo(p1, p2);
 
       couplePositions[p.coupleId] = {
         centerX: currentX - SPACING / 2, // drop line between previous person and right partner
         y: y,
-        bottomY: y + BOX_HEIGHT,
-        lineY: y + BOX_HEIGHT / 2,
+        bottomY: bottomY,
+        lineY: lineY,
         isSingle: false,
-        status: p.status
+        status: p.status,
+        leftPerson: node.mainId,
+        rightPerson: p.partnerId
       };
       currentX += BOX_WIDTH;
     } else {
+      const p1 = members.find(m => m.id === node.mainId);
+      const {singleLineY, singleBottomY} = getCoupleYInfo(p1, null);
       couplePositions[p.coupleId] = {
         centerX: mainIdX + BOX_WIDTH / 2,
-        y: y, bottomY: y + BOX_HEIGHT, lineY: y + BOX_HEIGHT, isSingle: true, status: p.status
+        y: y, bottomY: singleBottomY, lineY: singleLineY, isSingle: true, status: p.status
       };
     }
   });
@@ -704,33 +734,21 @@ function renderTree(forExport = false){
     const rightPos = positions[c.r];
     if(!leftPos || !rightPos || leftPos.x === -9999 || rightPos.x === -9999) return;
 
-    const x1 = Math.min(leftPos.x, rightPos.x) + BOX_WIDTH;
-    const x2 = Math.max(leftPos.x, rightPos.x);
-    let y = leftPos.y + BOX_HEIGHT / 2;
+    const mLeft = members.find(m => m.id === c.l);
+    const mRight = members.find(m => m.id === c.r);
 
-    // If they are not adjacent (meaning another person is between them)
-    if (x2 - x1 > SPACING + 2) {
-        // Route the line slightly lower or higher to avoid striking through the person in between.
-        // Let's route it behind, but SVG doesn't have z-index, it's drawn first.
-        // Actually, let's just draw an arched line or drop it down a bit.
-        // Easiest is to draw a bracket-like line: go down from main, horizontal, then up to partner.
-        // Or just let it cross but ensure the boxes have white background (they do).
-        // Since boxes have white background and are drawn AFTER lines, the line will be hidden BEHIND the box!
-        // Wait, the image shows the line crossing the box?
-        // Ah, the image doesn't show a line crossing through the box because the box has fill="#fff" or "#FFFF99".
-        // But the text "離別" might overlap?
-        // Wait, the children of E and New Spouse:
-        // In the layout `calculateLayout`, `parentDropX` is `currentX - SPACING / 2`.
-        // This means it drops from the line segment right before the partner.
-        // So for New Spouse (at 192), parentDropX is 192 - 8 = 184.
-        // That is correct! It drops from between F and New Spouse?
-        // No, currentX before partner is 96+80=176. + SPACING(16) = 192. parentDropX = 192 - 8 = 184.
-        // So it drops between F and New Spouse.
+    // Determine which node is on the left physically
+    const isLNodeLeft = leftPos.x < rightPos.x;
+    const leftNode = isLNodeLeft ? mLeft : mRight;
+    const rightNode = isLNodeLeft ? mRight : mLeft;
 
-        svgContent += `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="#000" stroke-width="1"/>`;
-    } else {
-        svgContent += `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="#000" stroke-width="1"/>`;
-    }
+    const x1 = Math.min(leftPos.x, rightPos.x) + BOX_WIDTH + (leftNode.sh ? 4 : 0);
+    const x2 = Math.max(leftPos.x, rightPos.x) - (rightNode.sh ? 4 : 0);
+
+    const isAnySh = leftNode.sh || rightNode.sh;
+    let y = leftPos.y + (isAnySh ? (BOX_HEIGHT + 8) / 2 : BOX_HEIGHT / 2);
+
+    svgContent += `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="#000" stroke-width="1"/>`;
 
     if (c.status === 'divorced' || c.status === 'bereaved') {
       const cx = (x1 + x2) / 2;
@@ -745,15 +763,16 @@ function renderTree(forExport = false){
     if(!coupleInfo) return;
 
     const parentDropX = coupleInfo.centerX;
-    // Step 2: Fix lines not connecting. Start the line from the middle horizontal line, not the bottom.
+    // Fix lines not connecting. Start the line from the horizontal line.
     const parentDropY = coupleInfo.lineY;
 
     const kids = p.k.map(kidId => {
       const kidPos = positions[kidId];
       if(!kidPos) return null;
-      const kidCouple = couples.find(c => c.l === kidId || c.r === kidId);
+      const kidNode = members.find(m => m.id === kidId);
       const kidCenterX = kidPos.x + BOX_WIDTH / 2;
-      return {centerX: kidCenterX, topY: kidPos.y};
+      const kidTopY = kidPos.y - (kidNode && kidNode.sh ? 4 : 0);
+      return {centerX: kidCenterX, topY: kidTopY};
     }).filter(Boolean);
 
     if(!kids.length) return;
@@ -810,8 +829,14 @@ function renderTree(forExport = false){
     if(member.name) columns.push({text: member.name, fontSize: 13, color: '#000', type: 'name'});
     if(member.dead) columns.push({text: '（故人）', fontSize: 9, color: '#666', type: 'dead'});
 
+    const colSpacing = 18;
+    // Total width of all columns combined
+    const totalColsWidth = columns.length > 0 ? (columns.length - 1) * colSpacing : 0;
+    // The starting X position (for the rightmost column) to center the group in BOX_WIDTH
+    const startTextX = x + BOX_WIDTH / 2 + totalColsWidth / 2;
+
     columns.forEach((col, colIndex) => {
-      const textX = x + BOX_WIDTH - 14 - colIndex * 18;
+      const textX = startTextX - colIndex * colSpacing;
       [...col.text].forEach((char, charIndex) => {
         let textY = y + 12 + col.fontSize * 0.6 + charIndex * col.fontSize * 1.28;
         if (col.type === 'name') {
@@ -823,7 +848,7 @@ function renderTree(forExport = false){
       });
     });
 
-    svgContent += `<text x="${x + 2}" y="${y + BOX_HEIGHT + 14}" font-family="${FONT_FAMILY}" font-size="11" fill="#333" style="pointer-events:none">${escapeHtml(member.rel)}</text>`;
+    svgContent += `<text x="${x + BOX_WIDTH / 2}" y="${y + BOX_HEIGHT + 14}" text-anchor="middle" font-family="${FONT_FAMILY}" font-size="11" fill="#333" style="pointer-events:none">${escapeHtml(member.rel)}</text>`;
   });
 
   // --- LEGEND for export ---
@@ -1235,6 +1260,14 @@ function commitCoupleStatus(value){
   const myCouples = couples.filter(c => c.l === selectedPersonId || c.r === selectedPersonId);
   if(myCouples.length === 0) return;
   myCouples[0].status = value; // Edit the first couple for now
+  renderTree();
+}
+
+function toggleCoupleSwap() {
+  saveUndoSnapshot();
+  const myCouples = couples.filter(c => c.l === selectedPersonId || c.r === selectedPersonId);
+  if(myCouples.length === 0) return;
+  myCouples[0].swapped = !myCouples[0].swapped;
   renderTree();
 }
 
