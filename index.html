@@ -475,20 +475,21 @@ function placeNode(node, centerX, y, positions, couplePositions){
   const leftPartners = [];
   const rightPartners = [];
   node.partners.forEach((p, i) => {
-    if (reverseCoupleOrder) {
-      if (i < Math.ceil(node.partners.length / 2)) {
-          // Normal logic swapped
-          rightPartners.push(p);
-      } else {
-          leftPartners.unshift(p);
-      }
+    // Individual swapped logic XOR global reverse logic
+    const shouldSwap = (reverseCoupleOrder !== p.swapped);
+
+    // Normal logic: older spouses (like divorced) on left, current on right.
+    // That means the first Math.floor(partners.length / 2) go to the left, rest to the right.
+    const goesToLeftNormally = i < Math.floor(node.partners.length / 2);
+
+    // If there is only 1 partner, Math.floor(1/2) = 0. So goesToLeftNormally is false. It goes to right normally.
+    // If shouldSwap is true, we want to flip the outcome of goesToLeftNormally.
+    const goesToLeft = shouldSwap ? !goesToLeftNormally : goesToLeftNormally;
+
+    if (goesToLeft) {
+        leftPartners.unshift(p);
     } else {
-      if (i < Math.floor(node.partners.length / 2)) {
-          // we want the first ones to be furthest left, so we prepend or just assign
-          leftPartners.unshift(p); // so furthest left is oldest
-      } else {
-          rightPartners.push(p);
-      }
+        rightPartners.push(p);
     }
   });
 
