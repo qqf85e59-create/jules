@@ -69,6 +69,9 @@ body{font-family:'Meiryo UI', sans-serif;background:#f7f7f7;overflow:hidden;heig
     <option value="A3V">出力サイズ: A3縦</option>
     <option value="A3H">出力サイズ: A3横</option>
   </select>
+  <label style="font-size:11px; margin-left:8px; cursor:pointer; display:flex; align-items:center;">
+    <input type="checkbox" id="reverseOrderToggle" onchange="toggleReverseOrder()" style="margin-right:4px;">夫婦の配置を逆にする
+  </label>
   <span id="fileNameDisplay" style="color:#666;font-size:11px;margin-left:4px"></span>
   <span style="color:#aaa;font-size:10px;margin-left:3px">ドラッグ:移動 ／ スクロール:拡大縮小 ／ クリック:編集 ／ 右クリック:追加メニュー</span>
 </div>
@@ -156,7 +159,8 @@ function saveUndoSnapshot(){
     members: members,
     couples: couples,
     parentChildren: parentChildren,
-    paper: getElement('paperSize') ? getElement('paperSize').value : 'A4H'
+    paper: getElement('paperSize') ? getElement('paperSize').value : 'A4H',
+    reverseOrder: typeof reverseCoupleOrder !== 'undefined' ? reverseCoupleOrder : false
   }));
   if(undoHistory.length > 40) undoHistory.shift();
   markAsDirty();
@@ -175,6 +179,10 @@ function undoLastAction(){
   couples = JSON.parse(JSON.stringify(prevState.couples));
   parentChildren = JSON.parse(JSON.stringify(prevState.parentChildren));
   if (prevState.paper && getElement('paperSize')) getElement('paperSize').value = prevState.paper;
+  if (prevState.reverseOrder !== undefined && typeof reverseCoupleOrder !== 'undefined') {
+    reverseCoupleOrder = prevState.reverseOrder;
+    if(getElement('reverseOrderToggle')) getElement('reverseOrderToggle').checked = reverseCoupleOrder;
+  }
 
   selectedPersonId = null;
   closeEditPanel();
@@ -197,6 +205,7 @@ document.addEventListener('keydown', e => {
 /* ===== FILE SAVE/LOAD (JSON) & AUTO BACKUP ===== */
 let currentFileName = '';
 let isDirty = false;
+let reverseCoupleOrder = false;
 
 function saveAutoBackup() {
   try {
@@ -205,6 +214,7 @@ function saveAutoBackup() {
       couples: couples,
       parentChildren: parentChildren,
       paper: getElement('paperSize') ? getElement('paperSize').value : 'A4H',
+      reverseOrder: reverseCoupleOrder,
       timestamp: Date.now()
     });
     localStorage.setItem('familyTreeAutoBackup', data);
@@ -225,6 +235,10 @@ function checkAutoBackup() {
       couples = backup.couples || backup.C;
       parentChildren = backup.parentChildren || backup.P;
       if (backup.paper && getElement('paperSize')) getElement('paperSize').value = backup.paper;
+      if (backup.reverseOrder !== undefined) {
+        reverseCoupleOrder = backup.reverseOrder;
+        if(getElement('reverseOrderToggle')) getElement('reverseOrderToggle').checked = reverseCoupleOrder;
+      }
 
       currentFileName = '';
       isDirty = true;
@@ -256,7 +270,8 @@ function saveFile(){
     members: members,
     couples: couples,
     parentChildren: parentChildren,
-    paper: getElement('paperSize').value
+    paper: getElement('paperSize').value,
+    reverseOrder: reverseCoupleOrder
   }, null, 2);
   const blob = new Blob([data], {type: 'application/json'});
   const name = currentFileName || '家系図_' + new Date().toISOString().slice(0, 10) + '.json';
@@ -285,6 +300,10 @@ function openFile(input){
       couples = parsedData.couples || parsedData.C;
       parentChildren = parsedData.parentChildren || parsedData.P;
       if (parsedData.paper && getElement('paperSize')) getElement('paperSize').value = parsedData.paper;
+      if (parsedData.reverseOrder !== undefined) {
+        reverseCoupleOrder = parsedData.reverseOrder;
+        if(getElement('reverseOrderToggle')) getElement('reverseOrderToggle').checked = reverseCoupleOrder;
+      }
 
       currentFileName = file.name;
       isDirty = false;
@@ -308,6 +327,8 @@ function newFile(){
   members = JSON.parse(JSON.stringify(DEFAULT_DATA.M));
   couples = JSON.parse(JSON.stringify(DEFAULT_DATA.C));
   parentChildren = JSON.parse(JSON.stringify(DEFAULT_DATA.P));
+  reverseCoupleOrder = false;
+  if(getElement('reverseOrderToggle')) getElement('reverseOrderToggle').checked = false;
   currentFileName = '';
   isDirty = false;
   undoHistory = [];
@@ -453,11 +474,20 @@ function placeNode(node, centerX, y, positions, couplePositions){
   const leftPartners = [];
   const rightPartners = [];
   node.partners.forEach((p, i) => {
-    if (i < Math.floor(node.partners.length / 2)) {
-        // we want the first ones to be furthest left, so we prepend or just assign
-        leftPartners.unshift(p); // so furthest left is oldest
+    if (reverseCoupleOrder) {
+      if (i < Math.ceil(node.partners.length / 2)) {
+          // Normal logic swapped
+          rightPartners.push(p);
+      } else {
+          leftPartners.unshift(p);
+      }
     } else {
-        rightPartners.push(p);
+      if (i < Math.floor(node.partners.length / 2)) {
+          // we want the first ones to be furthest left, so we prepend or just assign
+          leftPartners.unshift(p); // so furthest left is oldest
+      } else {
+          rightPartners.push(p);
+      }
     }
   });
 
@@ -1016,6 +1046,13 @@ getElement('sv').addEventListener('mousedown', e => {
     startPanning(e);
   }
 });
+
+function toggleReverseOrder() {
+  saveUndoSnapshot();
+  reverseCoupleOrder = getElement('reverseOrderToggle').checked;
+  markAsDirty();
+  renderTree();
+}
 
 function resetView(){
   const {positions} = calculateLayout();
